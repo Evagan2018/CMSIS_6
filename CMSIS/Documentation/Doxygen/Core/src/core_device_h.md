@@ -6,7 +6,7 @@ The Device Header File contains the following functionalities that are device-sp
  - \ref device_access provides definitions for the \ref peripheral_gr to all device peripherals. It contains all data structures and the address mapping for device-specific peripherals.
  - **Access Functions for Peripherals (optional)** provide additional helper functions for peripherals that are useful for programming of these peripherals. Access Functions may be provided as inline functions or can be extern references to a device-specific library provided by the silicon vendor.
 
-[API Reference](modules.html) describes the standard features and functions of the \ref device_h_pg in details.
+[API Reference](topics.html) describes the standard features and functions of the \ref device_h_pg in details.
 
 ## Interrupt Number Definition {#interrupt_number_sec}
 

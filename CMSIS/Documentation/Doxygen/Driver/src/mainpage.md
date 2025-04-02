@@ -2,7 +2,7 @@
 
 **CMSIS-Driver** specifies generic driver interfaces for peripherals commonly used in embedded systems with Arm® Cortex® processors.
 
-User applications and middleware components can control such peripherals using the [**CMSIS-Driver API**](modules.html) and so achieve better code reuse and simpler integration in various ecosystems. The API is designed to be generic and independent of a specific RTOS making it reusable across a wide range of supported microcontroller devices.
+User applications and middleware components can control such peripherals using the [**CMSIS-Driver API**](topics.html) and so achieve better code reuse and simpler integration in various ecosystems. The API is designed to be generic and independent of a specific RTOS making it reusable across a wide range of supported microcontroller devices.
 
 The following block diagram shows an exemplary set up for various drivers.
 

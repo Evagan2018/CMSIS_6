@@ -46,7 +46,7 @@ The various compiler vendor tool chains may provide folders that contain the CMS
 > **Note**
 > - The silicon vendors create these device-specific CMSIS-Core-A files based on \ref templates_pg provide by Arm.
 
-Thereafter, the functions described under [API Reference](modules.html) can be used in the application.
+Thereafter, the functions described under [API Reference](topics.html) can be used in the application.
 
 **Examples:**
  - \subpage using_CMSIS is a simple example that shows the usage of the CMSIS layer.

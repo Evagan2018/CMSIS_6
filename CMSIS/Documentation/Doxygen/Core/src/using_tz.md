@@ -120,7 +120,7 @@ As the *non-secure state* and *secure state* parts of an application are separat
 
 To allocate the context memory for threads, an RTOS kernel that runs in *non-secure state* calls the interface functions defined by the header file **tz_context.h**. The **TZ Context** functions themselves are part of the *secure state* application. An minimum implementation is provided as part of RTOS2 and should handle the secure stack for the thread execution. However it is also possible to implement the context memory management system with additional features such as access control to *secure state* memory regions using an MPU.
 
-The API functions of **TZ Context** are described in the chapter [API Reference](modules.html) under \ref trustzone_functions - \ref context_trustzone_functions.
+The API functions of **TZ Context** are described in the chapter [API Reference](topics.html) under \ref trustzone_functions - \ref context_trustzone_functions.
 
 CMSIS-Core provides a template implementation of **TZ Contenxt** in `CMSIS\Core\Template\ARMv8-M\tz_context.c` file.
 

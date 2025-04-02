@@ -43,7 +43,7 @@ The use of \ref device_h_pg can be abstracted with the `#define CMSIS_header_fil
 #include CMSIS_device_header                     // include <Device>.h file
 ```
 
-Thereafter, the functions described under [API Reference](modules.html) can be used in the application.
+Thereafter, the functions described under [API Reference](topics.html) can be used in the application.
 
 For example, the following files are provided by the STM32F10x device family pack:
 
