@@ -18,8 +18,7 @@ solution:
         - --semihosting
 
   packs:
-    - pack: ARM::CMSIS
-      path: ../../../
+    - pack: ARM::CMSIS@6.4.0
     - pack: ARM::Cortex_DFP
 
   target-types:
