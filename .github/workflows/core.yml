@@ -3,7 +3,7 @@ name: Core Checks
   workflow_dispatch: null
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: 'true'
+  cancel-in-progress: true
 jobs:
   lit:
     runs-on: ubuntu-24.04
@@ -71,5 +71,5 @@ jobs:
       if: ${{ !cancelled() }}
       uses: EnricoMi/publish-unit-test-result-action@v2
       with:
-        report_individual_runs: 'true'
+        report_individual_runs: true
         files: ./CMSIS/Core/Test/*.xunit

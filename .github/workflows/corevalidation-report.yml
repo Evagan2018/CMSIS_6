@@ -26,6 +26,6 @@ jobs:
       with:
         commit: ${{ github.event.workflow_run.head_sha }}
         event_file: artifacts/EventFile/event.json
-        report_individual_runs: 'true'
+        report_individual_runs: true
         event_name: ${{ github.event.workflow_run.event }}
         files: artifacts/**/*.junit
