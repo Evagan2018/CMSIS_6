@@ -105,7 +105,7 @@ jobs:
           if tool=='cbuild' and not realcbuild:continue
           dest=bindir/tool
           if dest.exists() or dest.is_symlink():dest.unlink()
-          dest.write_text('#!/usr/bin/env python3\nimport runpy,sys\nns=runpy.run_path('+repr(str(probe))+',run_name="gcc_probe")\nsys.exit(ns["wrapper"]('+repr(tool)+'))\n');dest.chmod(0o755)
+          dest.write_text('#!/usr/bin/env python3\nimport runpy,sys,os\nos.environ.setdefault("RUNNER_TEMP",'+repr(str(HOME.parent))+')\nos.environ.setdefault("GITHUB_WORKSPACE",'+repr(str(WORKSPACE))+')\nns=runpy.run_path('+repr(str(probe))+',run_name="gcc_probe")\nsys.exit(ns["wrapper"]('+repr(tool)+'))\n');dest.chmod(0o755)
          with open(os.environ['GITHUB_PATH'],'a') as f:f.write(str(bindir)+'\n')
          with open(os.environ['GITHUB_ENV'],'a') as f:
           f.write('GCC_TOOLCHAIN_15_3_2='+str(bindir)+'\nGCC_TOOLCHAIN_ROOT='+str(bindir)+'\n')
@@ -133,7 +133,7 @@ jobs:
            emit({'kind':'build','cwd':str(Path.cwd()),'arguments':args,'exit_code':rc,'duration_seconds':round(time.time()-start,2),'metadata':metadata,'compiler_version':cfg['environment']['dumpfullversion'],'version_verified':cfg['environment']['version_verified']})
           return rc
          real=str(Path(cfg['compiler_bin'])/tool);rc=subprocess.call([real]+args)
-         iscompile='-c' in args or '-S' in args or any(a.endswith(('.c','.cpp','.cc','.cxx','.s','.S')) for a in args)
+         iscompile=any(a in args for a in ('-c','-S','-E','-fsyntax-only','-')) or any(a.endswith(('.c','.cpp','.cc','.cxx','.s','.S','.test')) for a in args)
          if iscompile:emit({'kind':'compiler','tool':tool,'cwd':str(Path.cwd()),'arguments':args,'exit_code':rc,'version_verified':cfg['environment']['version_verified']},False)
          return rc
         def finish():
@@ -146,7 +146,7 @@ jobs:
            root=ET.parse(p).getroot()
            if root.tag not in ('testsuite','testsuites'):continue
            failures=sum(1 for t in root.iter() if t.tag in ('failure','error'))
-           xml.append({'path':str(p.relative_to(WORKSPACE)),'failures_or_errors':failures})
+           xml.append({'path':str(p.relative_to(WORKSPACE)),'failures_or_errors':failures,'diagnostics':[(x.text or '')[:2400] for x in root.iter() if x.tag in ('failure','error')][:3]})
           except ET.ParseError:pass
          result={'kind':'summary','artifact_version':TARGET,'compiler_versions':sorted({r['dumpfullversion'] for r in env}),'build_calls':len(builds),'failed_build_calls':sum(r['exit_code']!=0 for r in builds),'compiler_calls':len(compiles),'compiler_nonzero_calls':sum(r['exit_code']!=0 for r in compiles),'version_verified':bool(env) and all(r['version_verified'] for r in env),'xml_failure_records':sum(x['failures_or_errors']>0 for x in xml),'xml_reports':xml}
          # Compiler nonzero calls are not automatically failures: LIT includes negative compile tests.
