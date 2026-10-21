@@ -1,154 +1,224 @@
-name: CoreValidation
-on:
-  workflow_dispatch:
-  pull_request:
-    paths: 
-      - .github/workflows/corevalidation.yml
-      - .github/workflows/corevalidation-report.yml
-      - CMSIS/Core/Include/**/*
-      - CMSIS/Core/Source/**/*
-      - CMSIS/CoreValidation/**/*
-  push:
-    branches: [main]
-  
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
+name: GCC 15.3.2 qualification / CoreValidation
+'on':
+  workflow_dispatch: null
 jobs:
   build-and-run:
-    
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
-        compiler: [AC6, GCC, Clang, Clang_TI]
-    
+        include:
+        - compiler: GCC
     runs-on: ubuntu-24.04
-
     env:
       ARM_UBL_ACTIVATION_CODE: ${{ secrets.ARM_UBL_ACTIVATION_CODE }}
-      CLANG_TI_VERSION: "5.1.0.LTS"
-      CLANG_TI_TC_SUFFIX: "5_1_0"
-      CLANG_TI_INSTALL_PATH: "/home/runner/"
-      CLANG_TI_SHA256: "c758668b78c080be5ec75393cdd09d077742fd1183aa0c181318a0119d58c4d0"
-
+      CLANG_TI_VERSION: 5.1.0.LTS
+      CLANG_TI_TC_SUFFIX: '5_1_0'
+      CLANG_TI_INSTALL_PATH: /home/runner/
+      CLANG_TI_SHA256: c758668b78c080be5ec75393cdd09d077742fd1183aa0c181318a0119d58c4d0
     steps:
+    - uses: actions/checkout@v7
+      with:
+        repository: Evagan2018/CMSIS_6
+        ref: gcc-15.3.2-qualification-20261021-133244
+    - working-directory: /home/runner
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        if [ -d Cortex_DFP ]; then
+          cd Cortex_DFP
+          git fetch origin main
+          git checkout -f origin/main
+        else
+          gh repo clone ARM-software/Cortex_DFP
+        fi
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.14'
+        cache: pip
+    - name: Python requirements
+      run: |
+        pip install -r ./CMSIS/CoreValidation/Project/requirements.txt
+    - name: Inspect Python libraries
+      run: |
+        echo "pythonLocation=$pythonLocation"
+        find "$pythonLocation/lib" -maxdepth 1 -name 'libpython*' -ls
+        python3-config --embed --ldflags
+    - name: Install LLVM/Clang dependencies
+      if: matrix.compiler == 'Clang'
+      working-directory: /home/runner
+      run: |
+        sudo apt-get update
+        sudo apt-get install libtinfo6
+    - name: Activate vcpkg environment
+      uses: ARM-software/cmsis-actions/vcpkg@v1
+      with:
+        config: ./CMSIS/CoreValidation/Project/vcpkg-configuration.json
+    - name: Activate Arm tool license
+      uses: ARM-software/cmsis-actions/armlm@v1
+      with:
+        code: ${{ env.ARM_UBL_ACTIVATION_CODE }}
+    - uses: ammaraskar/gcc-problem-matcher@master
+      if: matrix.compiler == 'Clang' || matrix.compiler == 'Clang_TI' || matrix.compiler == 'GCC'
+    - name: Set TI Arm Clang Environment Variables and Path
+      if: matrix.compiler == 'Clang_TI'
+      run: |
+        echo "CLANG_TI_PATH=${{ env.CLANG_TI_INSTALL_PATH }}ti-cgt-armllvm_${{ env.CLANG_TI_VERSION }}" >> $GITHUB_ENV
+        echo "CLANG_TI_TOOLCHAIN_${{ env.CLANG_TI_TC_SUFFIX }}=${{ env.CLANG_TI_INSTALL_PATH }}ti-cgt-armllvm_${{ env.CLANG_TI_VERSION }}/bin" >> $GITHUB_ENV
+    - name: Cache TI Arm Clang
+      if: matrix.compiler == 'Clang_TI'
+      id: cache-ti-arm-clang
+      uses: actions/cache@v6
+      with:
+        path: ${{ env.CLANG_TI_PATH }}
+        key: ${{ runner.os }}-ti-arm-clang-${{ env.CLANG_TI_VERSION }}
+    - name: Download and Verify TI Arm Clang Installer
+      if: matrix.compiler == 'Clang_TI' && steps.cache-ti-arm-clang.outputs.cache-hit != 'true'
+      working-directory: /home/runner
+      run: |
+        FILE="ti_cgt_armllvm_${{ env.CLANG_TI_VERSION }}_linux-x64_installer.bin"
+        URL="https://dr-download.ti.com/software-development/ide-configuration-compiler-or-debugger/MD-ayxs93eZNN/${{ env.CLANG_TI_VERSION }}/${FILE}"
 
-      - uses: actions/checkout@v7
+        curl -L "$URL" -o "$FILE"
+        echo "${{ env.CLANG_TI_SHA256 }}  $FILE" | sha256sum --check
+        chmod +x "$FILE"
+        ./"$FILE" --mode unattended --prefix "${{ env.CLANG_TI_INSTALL_PATH }}"
+    - name: Install GCC 15.3.2 qualification probe
+      id: gcc_probe
+      if: ${{ !cancelled() }}
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      run: |
+        mkdir -p "$RUNNER_TEMP/gcc-15.3.2-qualification"
+        cat > "$RUNNER_TEMP/gcc-15.3.2-qualification/probe.py" <<'GCC_PROBE_EOF'
+        #!/usr/bin/env python3
+        """GCC qualification instrumentation for Linux runners; standard library only."""
+        import hashlib,json,os,re,shutil,subprocess,sys,time,xml.etree.ElementTree as ET
+        from pathlib import Path
+        TARGET='15.3.2'
+        HOME=Path(os.environ.get('RUNNER_TEMP','.'))/'gcc-15.3.2-qualification'
+        WORKSPACE=Path(os.environ.get('GITHUB_WORKSPACE','.')).resolve()
+        SKIP={'.git','.packs','.Download','node_modules','boost_1_84_0'}
+        def emit(value,announce=True):
+         HOME.mkdir(parents=True,exist_ok=True)
+         with (HOME/'evidence.jsonl').open('a',encoding='utf-8') as f:f.write(json.dumps(value)+'\n')
+         if announce:print('GCC_QUALIFICATION_RESULT '+json.dumps(value),flush=True)
+        def scan(suffix):
+         for base,dirs,names in os.walk(WORKSPACE):
+          dirs[:]=[d for d in dirs if d not in SKIP and not Path(base,d).is_symlink()]
+          for name in names:
+           if name.endswith(suffix):yield Path(base,name)
+        def install():
+         HOME.mkdir(parents=True,exist_ok=True);bindir=HOME/'bin';bindir.mkdir(exist_ok=True)
+         envpath=os.environ.get('GCC_TOOLCHAIN_15_3_2')
+         if not envpath:raise RuntimeError('Exact vcpkg GCC_TOOLCHAIN_15_3_2 export is missing')
+         realgcc=(Path(envpath)/'arm-none-eabi-gcc').resolve()
+         if not realgcc.is_file():raise RuntimeError('GCC artifact export does not resolve to a compiler')
+         version=subprocess.check_output([str(realgcc),'-dumpfullversion'],text=True).strip()
+         banner=subprocess.check_output([str(realgcc),'--version'],text=True).splitlines()[0]
+         info={'kind':'environment','artifact_version':TARGET,'artifact_export':'GCC_TOOLCHAIN_15_3_2','real_compiler':str(realgcc),'dumpfullversion':version,'compiler_banner':banner,'compiler_sha256':hashlib.sha256(realgcc.read_bytes()).hexdigest(),'version_verified':version==TARGET,'vcpkg_exports':{k:v for k,v in os.environ.items() if k.startswith('GCC_TOOLCHAIN_')}}
+         realcbuild=shutil.which('cbuild')
+         config={'compiler_bin':str(realgcc.parent),'cbuild':realcbuild,'environment':info}
+         (HOME/'config.json').write_text(json.dumps(config))
+         for f in realgcc.parent.iterdir():
+          dest=bindir/f.name
+          if not dest.exists():dest.symlink_to(f)
+         # Compiler invocations are retained as JSONL artifacts, not printed individually.
+         probe=Path(__file__).resolve()
+         for tool in ['arm-none-eabi-gcc','arm-none-eabi-g++','cbuild']:
+          if tool=='cbuild' and not realcbuild:continue
+          dest=bindir/tool
+          if dest.exists() or dest.is_symlink():dest.unlink()
+          dest.write_text('#!/usr/bin/env python3\nimport runpy,sys\nns=runpy.run_path('+repr(str(probe))+',run_name="gcc_probe")\nsys.exit(ns["wrapper"]('+repr(tool)+'))\n');dest.chmod(0o755)
+         with open(os.environ['GITHUB_PATH'],'a') as f:f.write(str(bindir)+'\n')
+         with open(os.environ['GITHUB_ENV'],'a') as f:
+          f.write('GCC_TOOLCHAIN_15_3_2='+str(bindir)+'\nGCC_TOOLCHAIN_ROOT='+str(bindir)+'\n')
+          for k in os.environ:
+           if k.startswith('GCC_TOOLCHAIN_') and k not in ('GCC_TOOLCHAIN_15_3_2','GCC_TOOLCHAIN_ROOT'):f.write(k+'=\n')
+         emit(info)
+         if not info['version_verified']:print('::warning::Artifact is labelled 15.3.2 but compiler banner reports '+version,flush=True)
+        def wrapper(tool):
+         cfg=json.loads((HOME/'config.json').read_text());args=sys.argv[1:];start=time.time()
+         if tool=='cbuild':
+          real=cfg['cbuild'];isbuild=any('.csolution.' in a for a in args) and not any(a in args for a in ['setup','list','clean','--help','--version'])
+          if isbuild:
+           if '--toolchain' in args:
+            selected=args[args.index('--toolchain')+1]
+            if selected.split('@')[0].upper()!='GCC':raise RuntimeError('Non-GCC build reached qualification wrapper: '+selected)
+           else:args+=['--toolchain','GCC']
+          before={str(p):p.stat().st_mtime_ns for p in scan('.cbuild.yml')} if isbuild else {}
+          rc=subprocess.call([real]+args)
+          if isbuild:
+           metadata=[]
+           for p in scan('.cbuild.yml'):
+            if before.get(str(p))!=p.stat().st_mtime_ns:
+             text=p.read_text(encoding='utf-8-sig',errors='replace');comp=re.findall(r'^\s*compiler:\s*(.+)$',text,re.M);ctx=re.findall(r'^\s*context:\s*(.+)$',text,re.M)
+             metadata.append({'path':str(p.relative_to(WORKSPACE)),'compiler':comp,'context':ctx})
+           emit({'kind':'build','cwd':str(Path.cwd()),'arguments':args,'exit_code':rc,'duration_seconds':round(time.time()-start,2),'metadata':metadata,'compiler_version':cfg['environment']['dumpfullversion'],'version_verified':cfg['environment']['version_verified']})
+          return rc
+         real=str(Path(cfg['compiler_bin'])/tool);rc=subprocess.call([real]+args)
+         iscompile='-c' in args or '-S' in args or any(a.endswith(('.c','.cpp','.cc','.cxx','.s','.S')) for a in args)
+         if iscompile:emit({'kind':'compiler','tool':tool,'cwd':str(Path.cwd()),'arguments':args,'exit_code':rc,'version_verified':cfg['environment']['version_verified']},False)
+         return rc
+        def finish():
+         records=[json.loads(l) for l in (HOME/'evidence.jsonl').read_text().splitlines()] if (HOME/'evidence.jsonl').exists() else []
+         env=[r for r in records if r['kind']=='environment'];builds=[r for r in records if r['kind']=='build'];compiles=[r for r in records if r['kind']=='compiler']
+         xml=[]
+         for p in scan(('.xunit','.xml')):
+          if 'junit' not in p.name.lower() and not p.name.endswith('.xunit') and p.name!='lit.xml':continue
+          try:
+           root=ET.parse(p).getroot()
+           if root.tag not in ('testsuite','testsuites'):continue
+           failures=sum(1 for t in root.iter() if t.tag in ('failure','error'))
+           xml.append({'path':str(p.relative_to(WORKSPACE)),'failures_or_errors':failures})
+          except ET.ParseError:pass
+         result={'kind':'summary','artifact_version':TARGET,'compiler_versions':sorted({r['dumpfullversion'] for r in env}),'build_calls':len(builds),'failed_build_calls':sum(r['exit_code']!=0 for r in builds),'compiler_calls':len(compiles),'compiler_nonzero_calls':sum(r['exit_code']!=0 for r in compiles),'version_verified':bool(env) and all(r['version_verified'] for r in env),'xml_failure_records':sum(x['failures_or_errors']>0 for x in xml),'xml_reports':xml}
+         # Compiler nonzero calls are not automatically failures: LIT includes negative compile tests.
+         result['qualification_pass']=bool(compiles) and result['version_verified'] and not result['failed_build_calls'] and not result['xml_failure_records']
+         (HOME/'summary.json').write_text(json.dumps(result,indent=2));emit(result)
+         return 0 if result['qualification_pass'] else 1
+        if __name__=='__main__':
+         tool=Path(sys.argv[0]).name
+         if tool in ('cbuild','arm-none-eabi-gcc','arm-none-eabi-g++'):sys.exit(wrapper(tool))
+         if '--install' in sys.argv:install()
+         elif '--finish' in sys.argv:sys.exit(finish())
 
-      - working-directory: /home/runner
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [ -d Cortex_DFP ]; then
-            cd Cortex_DFP
-            git fetch origin main
-            git checkout -f origin/main
-          else
-            gh repo clone ARM-software/Cortex_DFP
-          fi
+        GCC_PROBE_EOF
+        python3 "$RUNNER_TEMP/gcc-15.3.2-qualification/probe.py" --install
+        echo "ready=true" >> "$GITHUB_OUTPUT"
+    - name: Build
+      working-directory: ./CMSIS/CoreValidation/Project
+      run: |
+        echo "Register local Cortex_DFP pack"
+        cpackget add /home/runner/Cortex_DFP/ARM.Cortex_DFP.pdsc
 
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.14'
-          cache: 'pip'
-
-      - name: Python requirements
-        run: |
-          pip install -r ./CMSIS/CoreValidation/Project/requirements.txt
-
-      - name: Inspect Python libraries
-        run: |
-          echo "pythonLocation=$pythonLocation"
-          find "$pythonLocation/lib" -maxdepth 1 -name 'libpython*' -ls
-          python3-config --embed --ldflags
-
-      - name: Install LLVM/Clang dependencies
-        if: matrix.compiler == 'Clang'
-        working-directory: /home/runner
-        run: |
-          sudo apt-get update
-          sudo apt-get install libtinfo6
-    
-      - name: Activate vcpkg environment
-        uses: ARM-software/cmsis-actions/vcpkg@v1
-        with:
-          config: ./CMSIS/CoreValidation/Project/vcpkg-configuration.json
-          
-      - name: Activate Arm tool license
-        uses: ARM-software/cmsis-actions/armlm@v1
-        with:
-          code: "${{ env.ARM_UBL_ACTIVATION_CODE }}"
-      
-      - name: Initialize CodeQL
-        if: matrix.compiler == 'GCC'
-        uses: github/codeql-action/init@v4
-        with:
-          languages: cpp
-          queries: security-and-quality
-
-      - uses: ammaraskar/gcc-problem-matcher@master
-        if: matrix.compiler == 'Clang' || matrix.compiler == 'Clang_TI' || matrix.compiler == 'GCC'
-
-      - name: Set TI Arm Clang Environment Variables and Path
-        if: matrix.compiler == 'Clang_TI'
-        run: |
-          echo "CLANG_TI_PATH=${{ env.CLANG_TI_INSTALL_PATH }}ti-cgt-armllvm_${{ env.CLANG_TI_VERSION }}" >> $GITHUB_ENV
-          echo "CLANG_TI_TOOLCHAIN_${{ env.CLANG_TI_TC_SUFFIX }}=${{ env.CLANG_TI_INSTALL_PATH }}ti-cgt-armllvm_${{ env.CLANG_TI_VERSION }}/bin" >> $GITHUB_ENV
-
-      - name: Cache TI Arm Clang
-        if: matrix.compiler == 'Clang_TI'
-        id: cache-ti-arm-clang
-        uses: actions/cache@v6
-        with:
-          path: ${{ env.CLANG_TI_PATH }}
-          key: ${{ runner.os }}-ti-arm-clang-${{ env.CLANG_TI_VERSION }}
-
-      - name: Download and Verify TI Arm Clang Installer
-        if: matrix.compiler == 'Clang_TI' && steps.cache-ti-arm-clang.outputs.cache-hit != 'true'
-        working-directory: /home/runner
-        run: |
-          FILE="ti_cgt_armllvm_${{ env.CLANG_TI_VERSION }}_linux-x64_installer.bin"
-          URL="https://dr-download.ti.com/software-development/ide-configuration-compiler-or-debugger/MD-ayxs93eZNN/${{ env.CLANG_TI_VERSION }}/${FILE}"
-
-          curl -L "$URL" -o "$FILE"
-          echo "${{ env.CLANG_TI_SHA256 }}  $FILE" | sha256sum --check
-          chmod +x "$FILE"
-          ./"$FILE" --mode unattended --prefix "${{ env.CLANG_TI_INSTALL_PATH }}"
-
-      - name: Build
-        working-directory: ./CMSIS/CoreValidation/Project
-        run: |
-          echo "Register local Cortex_DFP pack"
-          cpackget add /home/runner/Cortex_DFP/ARM.Cortex_DFP.pdsc
-
-          echo "Build test projects ..."
-          ./build.py --verbose -c ${{ matrix.compiler }} build || echo "::warning::=== Some configurations failed to build! ==="
-
-      - name: Perform CodeQL Analysis
-        if: ${{ !cancelled() && matrix.compiler == 'GCC' }}
-        uses: github/codeql-action/analyze@v4
-
-      - name: Execute
-        working-directory: ./CMSIS/CoreValidation/Project
-        run: |
-          echo "Run test projects ..."
-          ./build.py --verbose -c ${{ matrix.compiler }} -d "CM*" run || echo "::warning::==== Some configurations failed to run! ==="
-
-      - name: Archive Test Reports
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: test-results-${{ matrix.compiler }}
-          path: ./CMSIS/CoreValidation/Project/build/*.junit
-
-  event-file:
-    needs: [build-and-run]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Archive event file
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: EventFile
-          path: ${{ github.event_path }}
+        echo "Build test projects ..."
+        ./build.py --verbose -c ${{ matrix.compiler }} build || echo "::warning::=== Some configurations failed to build! ==="
+      if: ${{ !cancelled() && steps.gcc_probe.outputs.ready == 'true' && (success()) }}
+    - name: Execute
+      working-directory: ./CMSIS/CoreValidation/Project
+      run: |
+        echo "Run test projects ..."
+        ./build.py --verbose -c ${{ matrix.compiler }} -d "CM*" run || echo "::warning::==== Some configurations failed to run! ==="
+    - name: Archive Test Reports
+      if: ${{ !cancelled() }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: test-results-${{ matrix.compiler }}
+        path: ./CMSIS/CoreValidation/Project/build/*.junit
+    - name: Verify GCC 15.3.2 compilation evidence
+      if: always()
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      run: python3 "$RUNNER_TEMP/gcc-15.3.2-qualification/probe.py" --finish
+    - name: Upload GCC qualification evidence
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: gcc-qualification-${{ github.job }}-${{ strategy.job-index }}
+        path: ${{ runner.temp }}/gcc-15.3.2-qualification/*.json*
+        if-no-files-found: warn
+        retention-days: 14
+    timeout-minutes: 360
+run-name: GCC 15.3.2 / corevalidation.yml / ${{ github.run_id }}
+permissions:
+  contents: read
