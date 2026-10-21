@@ -53,10 +53,6 @@ jobs:
       uses: ARM-software/cmsis-actions/vcpkg@v1
       with:
         config: ./CMSIS/CoreValidation/Project/vcpkg-configuration.json
-    - name: Activate Arm tool license
-      uses: ARM-software/cmsis-actions/armlm@v1
-      with:
-        code: ${{ env.ARM_UBL_ACTIVATION_CODE }}
     - uses: ammaraskar/gcc-problem-matcher@master
       if: matrix.compiler == 'Clang' || matrix.compiler == 'Clang_TI' || matrix.compiler == 'GCC'
     - name: Set TI Arm Clang Environment Variables and Path
