@@ -78,6 +78,8 @@ jobs:
         echo "${{ env.CLANG_TI_SHA256 }}  $FILE" | sha256sum --check
         chmod +x "$FILE"
         ./"$FILE" --mode unattended --prefix "${{ env.CLANG_TI_INSTALL_PATH }}"
+    - name: Activate Arm tool license
+      uses: ARM-software/cmsis-actions/armlm@v1
     - name: Install GCC 15.3.2 qualification probe
       id: gcc_probe
       if: ${{ !cancelled() }}
